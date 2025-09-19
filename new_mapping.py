@@ -1,7 +1,7 @@
 import os
 import pdb
 import argparse
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -17,6 +17,7 @@ from model import Canadian_mapping_model_func, MonteCarloConsistency, Unsupervis
 from trainer import Trainer_container, visualization_func
 import json
 from generate_geotiff_province_map import map_generation
+from predict_whole_map import *
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def set_seed(seed=42):
@@ -58,7 +59,7 @@ class IceClassificationDataset(Dataset):
 
         self.class_names = {
             0: 'first_year_ice',
-            1: 'young_ice',
+            1: 'old_ice',
             2: 'water',
             3: 'background' if include_background else None
         }
@@ -539,7 +540,7 @@ def main():
 
     # Visualize with coordinate arrays
     class_names = {0: 'first_year_ice', 1: 'old_ice', 2: 'water'}
-    visualize_batch_with_coordinates(batch, class_names)
+    # visualize_batch_with_coordinates(batch, class_names)
     num_classes = Train_setting_params['num_classes']
     hidden_dim = model_params['hidden_dim']
     d_conv = model_params['d_conv']
@@ -563,9 +564,9 @@ def main():
                                    train_loader, val_loader, test_loader, device, num_classes, ignore_index, 0.0)
     # Train_func.train()
     # Train_func.test_()
-    vis_results = visualization_func(uncertainty_estimator, model, model_save_path, args.results_dir, test_dataset, 15, device,
-                                     "Figure")
-    vis_results.vis_func()
+    # vis_results = visualization_func(uncertainty_estimator, model, model_save_path, args.results_dir, test_dataset, 15, device,
+    #                                  "Figure")
+    # vis_results.vis_func()
     if Train_setting_params["predict_whole_map"] == True:
         print("start to predict whole map...")
         # Uncertainty_Scene = np.load("/mnt/storage/benchmark_datasets/output_Alberta/Uncertanity_map.npy", mmap_mode='r')
@@ -573,9 +574,42 @@ def main():
         # plt.savefig("A.png", dpi=150)
         # pdb.set_trace()
         class_label_list = [0, 1, 2]
-        map_generation(device, model, uncertainty_estimator, num_classes,Train_setting_params["accuracy_report_name"], args.results_dir,
-                       Train_setting_params["prediction_map_name"], model_save_path,
-                       Train_setting_params['RCM_mosaic_image'], Train_setting_params["Uncertanity_map_name"],class_label_list)
+
+        hh_path = "/beluga/Hack12_multi_type_seaice/Hackathon_Sea_Ice_Typing/sar_images/RCM3-OK3472315-PK3534862-1-SCLNA-20250322-124532-HH-HV-GRD_hh-resolution-200m-reprojected-merged-resized.tiff"
+        hv_path = "/beluga/Hack12_multi_type_seaice/Hackathon_Sea_Ice_Typing/sar_images/RCM3-OK3472315-PK3534862-1-SCLNA-20250322-124532-HH-HV-GRD_hv-resolution-200m-reprojected-merged-resized.tiff"
+        nodata_mask_path = "/beluga/Hack12_multi_type_seaice/Hackathon_Sea_Ice_Typing/patch_extraction_script/nodata_mask.tif"
+        model_path = "/mnt/storage/Yimin/Seaice/model_weights.pth"
+        output_path = "/mnt/storage/Yimin/Seaice/results/mosaic.tif"
+
+        data_dir = "/beluga/Hack12_multi_type_seaice/Hackathon_Sea_Ice_Typing/all_valid_patches"
+        output_dir = "/mnt/storage/Yimin/Seaice/results"
+        mosaic_path = "/mnt/storage/Yimin/Seaice/results/mosaic.tiff"
+
+        #Create dataset and dataloader for prediction
+        dataset = PredictionDataset(data_dir, add_hh_hv_ratio=True)
+        dataloader = DataLoader(
+            dataset,
+            batch_size=4,
+            shuffle=False,
+            num_workers=4,
+            collate_fn=custom_collate_fn1
+        )
+
+        model = model.to(device)
+        model.load_state_dict(torch.load(model_path))
+        model.eval()
+
+        # Initialize prediction handler
+        predictor = PredictionHandler(output_dir, model)
+
+        # Run prediction and save results
+        predictor.predict_and_save(dataloader, device='cuda')
+
+        # Create mosaic from all predictions
+        predictor.create_mosaic(mosaic_path)
+        # map_generation(device, model, uncertainty_estimator, num_classes,Train_setting_params["accuracy_report_name"], args.results_dir,
+        #                Train_setting_params["prediction_map_name"], model_save_path,
+        #                Train_setting_params['RCM_mosaic_image'], Train_setting_params["Uncertanity_map_name"],class_label_list)
 
 
 
